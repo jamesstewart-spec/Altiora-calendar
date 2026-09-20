@@ -1,9 +1,20 @@
 name: Keep Supabase Alive
 
+# Two jobs:
+#  1) ping      - hits the Supabase REST API so the free-tier DB stays awake
+#  2) keepalive - each run updates a timestamp file and commits it. This
+#     counts as repo activity, which stops GitHub from auto-disabling the
+#     scheduled workflow after 60 days of inactivity. No third-party
+#     actions are used, so nothing external can break this.
+
 on:
   schedule:
-    - cron: '0 8 * * 1,4'
-  workflow_dispatch:
+    # 08:00 UTC every Monday, Wednesday and Friday (3x/week = good margin).
+    - cron: '0 8 * * 1,3,5'
+  workflow_dispatch:   # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write      # needed so the keepalive job can commit
 
 jobs:
   ping:
@@ -22,4 +33,23 @@ jobs:
           else
             echo "Ping did not succeed (status $HTTP_STATUS)."
             exit 1
+          fi
+
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+      - name: Record a heartbeat and commit it
+        run: |
+          mkdir -p .github
+          echo "Last keepalive run: $(date -u)" > .github/last-keepalive.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/last-keepalive.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: keepalive heartbeat [skip ci]"
+            git push
+          else
+            echo "No change to commit."
           fi
